@@ -1,0 +1,143 @@
+---
+title: "ps4_trf2122"
+author: "Taylor Francisco"
+date: "2023-12-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+rm(list=ls())
+```
+
+#Load Packages 
+```{r}
+library(quanteda)
+library(tidyverse)
+library(topicmodels)
+library(quanteda.textstats)
+library(quanteda.textmodels)
+library(quanteda.textplots)
+```
+
+
+#Question 1. 
+```{r}
+#read in files 
+fed_raw <- readtext::readtext("federalist/*.txt",
+                    docvarsfrom = "filenames", 
+                    dvsep = "_", 
+                    encoding = "ISO-8859-1")
+str(fed_raw) #seems to be correct, has 85 texts with doc id and doc var for each
+```
+```{r}
+#turn raw text into corpus 
+fp_corpus <- corpus(fed_raw)
+class(fp_corpus) #is in fact a corpus now
+```
+
+
+#Question 2. 
+
+```{r}
+#tokenize text, remove punctuation, symbols, numbers, and lower case 
+fp_corpus_cleaned <- tokens(x=fp_corpus, remove_punct = TRUE,
+                         	remove_symbols = TRUE, remove_numbers = TRUE) %>%
+                             	tokens_tolower() 
+#remove stop words
+
+fp_corpus_cleaned  <- tokens_select(fp_corpus_cleaned, pattern = stopwords('en'),
+                                 	selection = 'remove')
+#stem the tokens
+fp_corpus_cleaned <- tokens_wordstem(fp_corpus_cleaned)
+fp_corpus_cleaned
+
+#seems to have worked, no the's, words are chopped up into stems, etc
+```
+
+#Question 3.
+
+```{r}
+#create DFM 
+fed_dfm <- dfm(fp_corpus_cleaned)
+
+fed_dfm
+```
+```{r}
+#top ten words
+term_freq <- quanteda.textstats::textstat_frequency(fed_dfm, n = 10)  #would not work without calling the library specifically
+
+# Print the top terms
+print(term_freq)
+```
+
+#Question 4.and describe what you see. 
+
+```{r}
+#word cloud for all documents
+textplot_wordcloud(fed_dfm, max_words = 20)
+
+```
+ All of these words are relating to governance, power, state and people which
+ makes sense as the Federalist Papers are largely seen as a project to convince 
+ the American  public of the viability of the Constitution to allow the people 
+ to govern a stable nation. These words are all reflective of that purpose, 
+ particularly the largest word,and thus most frequent word, state is particularly
+ apt. 
+```{r}
+#word cloud for just Federalist Number 10 
+#subset dfm for only Federalist Number 10
+fed10_dfm <- fed_dfm["fp10.txt",]
+#create wordcloud
+textplot_wordcloud(fed10_dfm, max_words = 20)
+```
+Federalist Paper 10 is one of the few papers that were written by
+James Madison. In particular, Federalist 10 is known as one of the most important
+and frequently cited Papers and deals prominently with the problem of factions 
+and the tyranny of majority rule. This is well represented by these top 20 words
+that include small, faction, interest and differ which all reflect Madison's
+concern that a majority of individuals could capture the power of the government 
+and in a democracy effectively rule a minority. The largest word and thus 
+most frequently used word in this document is interest, which aligns with the 
+general theme of protecting different people's varying interests against the 
+tyranny of the majority. 
+#Question 5.
+
+```{r}
+topic_model_dfm <- convert(fed_dfm, to = "topicmodels")
+
+## manually set the number of topics to be found to 5
+lda_model  <-  LDA(topic_model_dfm, k = 5, method="Gibbs", control = list(seed=808))
+
+## find which features occur most frequently within each topic
+
+mu_fp  <-  tidy(lda_model, matrix = "beta")
+
+## organize the top features
+
+top_fp_features <- mu_fp %>%
+	group_by(topic) %>%
+	top_n(10,beta) %>% #find top 10 words for each topic
+	ungroup() %>%
+	arrange(topic,-beta)
+
+## plot the topics
+
+top_fp_features %>%
+	mutate(term = reorder_within(term, beta, topic)) %>%
+	ggplot(aes(term, beta, fill = factor(topic))) +
+	geom_col(show.legend = FALSE) +
+	facet_wrap(~ topic, scales = "free") +
+	coord_flip() +
+	scale_x_reordered()
+
+```
+Topic 1 seems to describe the general structure of the American government that 
+was outlined in the Constitution and described at length in the Federalist Papers.
+We can see specific features of the federalist models of governance including the 
+different branches of government (with words such as execut- and senate-) as 
+well as other words that align with the various organs of democracy (such as 
+"depart-" and "appoint-") which both align with features and processes that 
+relate to the functioning of the American Government. 

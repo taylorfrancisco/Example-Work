@@ -1,0 +1,213 @@
+---
+title: "PS3_TRF2122"
+author: "Taylor Francisco"
+date: "2023-11-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Setup 
+```{r load packages}
+rm(list=ls())
+library(tidyverse)
+library(maps)
+library(readr)
+library(readxl)
+library(plotly)
+library(gganimate)
+library(gifski)
+library(png)
+
+
+```
+
+##Upload Data 
+```{r}
+#upload anes data 
+df <- readRDS("PS3_anes.RDS")
+dim(df) #30 variables with 68224 observations
+sapply(df, class) #all three variables of interests are characters-
+                  #may need to change to factors 
+                  #year is numeric which should be fine for our purposes 
+
+#upload data for which party was in the presidency for each year 
+mood.df <- na.omit(read_excel("Mood5222.xlsx"))
+#break up the pty variable to its three components: potus, house, and senate as their own columns
+mood.df  <- mood.df %>%
+    mutate(year2=str_sub(year,3,4),
+           potuspty=str_sub(pty,1,1),
+           hsepty=str_sub(pty,2,2),
+           senpty=str_sub(pty,3,3))
+
+```
+
+##Clean Data 
+```{r}
+#merge potuspty with anes data 
+
+df <- left_join(df, mood.df, by = "year")
+colnames(df) #has all of the anes variables with the mood variables added at the end
+
+
+#create smaller df with only the variables we will be using 
+
+d <- df %>% select("year", "natl_econ_eval", "pid3", "personal_econ_eval", "potuspty" )
+colnames(d) #only those selected as expected 
+
+#filter for only years 1980-2020, no independents, no NAs (can do just greater than 1980 as 2020 is last year available)
+d <- d %>% filter(year >= 1980 & pid3 != 'ind' & !is.na(pid3)) %>%
+    drop_na()
+#create a table with how many missing data-points there are for each variable
+df %>% is.na() %>% colSums()
+
+#verify filtering worked
+unique(d$pid3)
+unique(d$natl_econ_eval)
+unique(d$personal_econ_eval)
+```
+
+
+#Question 1
+
+```{r}
+
+econ_facet <- d %>%
+    ggplot(aes(x= natl_econ_eval, fill = pid3)) +
+    geom_rect(aes(fill = potuspty),xmin = -Inf,xmax = Inf,  #create background of frames to indicate potus party 
+            ymin = -Inf,ymax = Inf,alpha = 0.3)  +
+    geom_bar(stat = "count", position = "dodge") +
+  #assign colors to each variable, add descriptive label 
+    scale_fill_manual(values = c("D" = "lightblue", "R" = "pink", "dem" = "blue2", "rep" = "red3"), 
+                      name="D/R= Party of President \n dem/rep = Party of Respondent")  +
+    theme(axis.text.x = element_text(angle = 90, hjust = 0.5)) +
+    facet_wrap(year ~ .) +
+     labs(x="National Economy Evaluation",y="Count") +
+        ggtitle("View of National Economy by Party Alignment")
+
+ggsave(econ_facet,file="econ_facet.png", height=7, width=10, units="in")
+econ_facet
+
+
+```
+
+For every year, the better category always has more respondents with matching
+political affiliation as the sitting President. Meaning for every year that a 
+democrat was President, there are more democrat respondents who view the economy 
+as being better. A similar pattern occurs for the worse category, those with 
+opposing political affiliations to the sitting President consistently rate 
+the economy as being worse. For the same category, it is fairly equal from both 
+parties, regardless of the President's affiliation. 
+
+#Question 2
+
+```{r}
+
+pers_econ_facet <- d %>%
+    ggplot(aes(x= personal_econ_eval, fill = pid3)) +
+    geom_rect(aes(fill = potuspty),xmin = -Inf,xmax = Inf, #create background of frames to indicate potus party 
+            ymin = -Inf,ymax = Inf,alpha = 0.3)  +
+    geom_bar(stat = "count", position = "dodge") +
+    #assign colors to each variable, add descriptive label 
+    scale_fill_manual(values = c("D" = "lightblue", "R" = "pink", "dem" = "blue2", "rep" = "red3"), 
+                      name="D/R= Party of President \n dem/rep = Party of Respondent")  +
+    theme(axis.text.x = element_text(angle = 90, hjust = 0.5)) +
+    facet_wrap(year ~ .) +
+     labs(x="Personal Economy Evaluation",y="Count") +
+        ggtitle("View of Personal Economy by Party Alignment")
+
+ggsave(pers_econ_facet,file="pers_econ_facet.png", height=7, width=10, units="in")
+pers_econ_facet
+
+```
+There are similar patterns in personal evaluation as in the  national evaluations. 
+For the better category, however, there seems to be a less strong pattern of matching 
+affiliations between respondent and President. While for most years those who match 
+the President's affiliation have more respondents answering "better", but the
+differences are a lot more subtle than the national evaluations, save for 2012
+going forward. Surprisingly, democrats consistently view their personal economics
+as being worse, regardless of the President's affiliation. Again this pattern is
+disrupted in 2012 going forward. The biggest difference to national evaluations 
+are in the years 2012, 2016, and 2020. In 2012 the views are quite polarized with 
+the majority of people either being "better" or "worse". The pattern of matching 
+ideologies still is present in this year. In 2016 and 2020 there is a lot more 
+central opinions, with the bulk of respondents being in the "same" category. 
+
+
+#Question 3
+##gif for national eval
+
+```{r}
+econ_anim_gif  <- d %>% ggplot(aes(x=natl_econ_eval, fill = pid3)) +
+    geom_bar(stat = "count", position = "dodge") +
+    scale_fill_manual(values=c("blue2", "red3")) +
+    geom_text(aes(x = 1, y = 3000, label = paste("year = ",year))) +
+    theme_bw() +
+    transition_states(
+        year,
+        transition_length = 2,
+        state_length = 1,
+        wrap=FALSE
+    ) +
+    ease_aes('sine-in-out')
+
+animate(econ_anim_gif, fps=5, renderer = gifski_renderer(loop = FALSE))
+anim_save("econ_facet_gif.gif")
+```
+
+
+##gif for personal eval
+```{r}
+pers_econ_anim_gif  <- d %>% ggplot(aes(x=personal_econ_eval, fill = pid3)) +
+    geom_bar(stat = "count", position = "dodge") +
+    scale_fill_manual(values=c("blue2", "red3")) +
+    geom_text(aes(x = 1, y = 3000, label = paste("year = ", year))) +
+    theme_bw() +
+    transition_states(
+        year,
+        transition_length = 2,
+        state_length = 1,
+        wrap=FALSE) + 
+    ease_aes('sine-in-out')
+
+animate(pers_econ_anim_gif, fps=5, renderer = gifski_renderer(loop = FALSE))
+anim_save("pers_econ_facet_gif.gif")
+```
+
+ 
+
+#Question 4
+
+```{r}
+
+nd <- d %>% 
+  mutate(potus = case_when( #change values of potuspty to match with pid3
+   potuspty == "R" ~ "rep",
+  potuspty == "D" ~ "dem")) 
+unique(nd$potus)
+
+
+pty_s_df <- nd %>% 
+  mutate(match = case_when( #create match column of whether the party identification is aligned with potuspty
+   pid3 == potus ~ "match",
+  pid3 != potus ~ "nonmatch")) %>% 
+ group_by(year, match, personal_econ_eval) %>%  
+ summarise(n = n()) %>% 
+ mutate(freq = n / sum(n))
+
+
+porp_pers_econ_facet <- pty_s_df  %>%
+    ggplot(aes(x= personal_econ_eval, y=freq, fill= match)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values=c("darkgreen", "grey")) + #green for match, grey for non-match
+    theme(axis.text.x = element_text(angle = 90, hjust = 0.5)) +
+    facet_wrap(year ~ .) +
+     labs(x="Personal Economy Evaluation",y="Porportion") +
+        ggtitle("Proportional View of Personal Economy by Party Alignment ")
+
+ggsave(porp_pers_econ_facet,file="porp_pers_econ_facet.png", height=7, width=10, units="in")
+porp_pers_econ_facet
+
+```
+
