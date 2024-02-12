@@ -1,0 +1,373 @@
+---
+title: "Appendix"
+author: "Taylor Francisco"
+date: "5/2/2022"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(readstata13)
+library(plyr)
+library(stargazer)
+library(stringr)
+library(ggplot2)
+library(psych)
+library(plm)
+library(visreg)
+library(VGAM)
+library(car)
+```
+
+
+```{r upload data}
+
+d <- read_tsv("NSDUH_2002_2019_Tab.tsv")
+
+```
+
+has 56136 subjects with 2741 observations
+
+
+#Re-coding variables
+
+```{r}
+#race
+d$race.fact = as.factor(d$NEWRACE2)
+
+d$race <- factor(d$race.fact, levels = c(1, 2, 3, 4, 5, 6, 7), 
+                        labels = c("NonHisp White", "NonHisp Black/Afr Am",
+                                   "NonHisp Native Am/AK Native", 
+                                   "NonHisp Native HI/Other Pac Isl",
+                                   "NonHisp Asian", "onHisp more than one race", 
+                                   "Hispanic"), exclude = NA, ordered= FALSE)
+#sex
+d$sex = as.factor(d$IRSEX)
+
+d$sex <- ordered(d$sex, levels = c(1, 2), 
+                        labels = c("Male", "Female")) 
+#age
+d$age = as.factor(d$CATAG6)
+
+d$age <- factor(d$age, levels = c(1, 2, 3, 4, 5, 6), 
+                        labels = c("12-17", "18-25 ", "26-34", "35-49",
+                                   "50-64","65+" ), exclude = NA, ordered = FALSE) 
+
+#health
+
+#re-code health so higher number is more trust
+
+
+d$HEALTH[d$HEALTH == 94 ] <- NA
+d$HEALTH[d$HEALTH == 97 ] <- NA
+d$HEALTH = 6-d$HEALTH 
+
+#psych distress
+
+d$distress <- d$SPDYR
+
+#insurance
+
+d$insurance <- d$ANYHLTI2
+
+d$insurance[d$insurance == 94 ] <- NA
+d$insurance[d$insurance == 97 ] <- NA
+d$insurance[d$insurance == 98 ] <- NA
+
+#poverty 
+d$poverty <- d$POVERTY3 
+
+#edu
+d$edu <- d$EDUHIGHCAT
+d$edu[d$edu == 5 ] <- NA
+```
+
+
+
+#Dependent variable
+```{r}
+d$dependence <- d$DPPYILLALC 
+
+tab.rel = table(d$dependence)
+prop.table(tab.rel)
+```
+
+
+#Descriptive Stats
+ 
+
+```{r}
+sub <- d[,c("race", "age", "sex","HEALTH" , "distress", "insurance", "poverty", "edu")]
+
+sum <- describe(sub)
+write.csv(sum, "summary.csv", row.names = T)
+
+
+describe(d$dependence)
+
+
+
+```
+
+#Data Exploration 
+
+```{r}
+my_summary <- count(d, "race")
+my_summary
+```
+
+
+```{r histogram of counts}
+
+inc_hist <- ggplot(d, aes(race, fill = race))
+inc_hist + geom_histogram(stat = "count",  binwidth = .5) +
+  labs( x = "race", y = "count", 
+        title ="Respondents Per Race") +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+```
+
+
+```{r sex histogram}
+sex_hist <- ggplot(d, aes(sex, fill = sex))
+sex_hist + geom_histogram(stat = "count",  binwidth = .5) +
+  labs( x = "sex", y = "count", 
+        title ="Respondents Per Sex") +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+```{r age histogram}
+ age_hist <- ggplot(d, aes(age, fill = age))
+age_hist + geom_histogram(stat = "count",  binwidth = .5) +
+  labs( x = "age", y = "count", 
+        title ="Respondents Per Age Category") +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+#Model 1
+
+```{r first model}
+
+
+logit1 = glm(dependence ~ relevel(age, ref =  "18-25 ")+ sex + relevel(race, ref = "NonHisp White"), d, family=binomial)
+
+summary(logit1)
+
+
+
+```
+
+
+
+```{r calculate log odds}
+log_odds <- exp(coef(logit1))
+
+
+```
+
+```{r predicted probabilities}
+pred.dat <- with(d, expand.grid( 
+  age = sort(unique(age)),
+  race= sort(unique(race)),
+  sex = sort(unique(sex))))
+
+
+
+predProb <- function(model, predData, ci = TRUE, level = 0.95){
+  
+  link <- model$family$link
+  bad_link <- !(link %in% c("logit", "probit"))
+  
+  if (bad_link) {
+    stop("Link function should be 'logit' or 'probit'")
+  }
+  
+  fun <- ifelse(link == "probit", "pnorm", "plogis")
+  
+  if (ci == FALSE){
+    preds <- predict(model, type = "response", newdata = predData)
+    preds <- cbind(predData, PredictedProb = preds)
+    return(preds)
+  }
+  else {
+    temp <- predict(model, type = "link", se = TRUE, newdata = predData)
+    fit <- temp$fit
+    se <- temp$se.fit
+    p <- (1 - level)/2
+    p <- c(p, 1-p)
+    PredictedProb <- do.call(fun, args = list(q = fit))
+    ci1 <- do.call(fun, args = list(q = fit + qnorm(p[1])*se))
+    ci2 <- do.call(fun, args = list(q = fit + qnorm(p[2])*se))
+    CI <- cbind(ci1, ci2)
+    colnames(CI) <- paste0(paste(100*p), "%")
+    preds <- cbind(predData, PredictedProb, CI)
+    return(preds)
+  }
+}
+
+pred_prob <- predProb(logit1, predData = pred.dat, ci = F)
+
+
+```
+
+#Second Model 
+```{r}
+logit2 = glm(dependence ~  relevel(age, ref = "18-25 ") + relevel(race, ref = "NonHisp White") + sex + edu + poverty + insurance + distress + HEALTH, d, family=binomial)
+
+summary(logit2)
+```
+
+```{r}
+log_odds2 <- exp(coef(logit2))
+
+
+
+pred.dat2 <- with(d, expand.grid(
+  age = age,
+  race= sort(unique(race)),
+  sex = sort(unique(sex)),  
+ edu = sort(unique(edu)),
+poverty = sort(unique(poverty)),
+insurance = sort(unique(insurance)),
+distress = sort(unique(distress)),
+HEALTH = sort(unique(HEALTH))))
+
+pred_prob2 <- predProb(logit2, predData = pred.dat2, ci = F)
+write.csv(pred_prob2, "pred_prob2.csv", row.names = T)
+
+visreg(logit2, "race", by = "insurance", 
+       partial = F, overlay = T, 
+       xlab = "Race", 
+       ylab = "Predicted probability", 
+       scale= "response",
+       type="conditional",
+       alpha=.05) 
+ 
+
+
+
+
+
+prob_dependence <- visreg(logit2, "race", scale="response", rug=2, xlab="Race",
+ylab="P(dependence)")
+```
+#figure out what variables are collinear 
+
+```{r}
+#health, distress, insurance 
+
+vif <- vif(logit2)
+
+write.csv(vif, "vif.csv", row.names = T)
+
+```
+
+
+```{r}
+subset <- d[,c("HEALTH", "distress", "insurance")]
+subset
+
+summary(alpha(subset))
+
+alpha(subset)
+```
+
+
+#More Models
+
+```{r model 3}
+logit3 = glm(dependence ~  relevel(age, ref = "18-25 ") + relevel(race, ref = "NonHisp White") + sex + edu + insurance * HEALTH + distress + poverty, d, family=binomial)
+
+summary(logit3)
+
+```
+```{r model 4}
+logit4 = glm(dependence ~  relevel(age, ref = "18-25 ") * relevel(race, ref = "NonHisp White") + sex + edu + insurance * HEALTH + distress + poverty, d, family=binomial)
+
+summary(logit4)
+```
+Better AIC, but dont think there is enough N's to support this model 
+
+```{r model 5}
+logit5 = glm(dependence ~  relevel(age, ref = "18-25 ") + relevel(race, ref = "NonHisp White")*insurance + distress + sex + HEALTH + poverty, d, family=binomial)
+
+summary(logit5)
+```
+```{r model 7}
+logit7 = glm(dependence ~  relevel(age, ref = "18-25 ") + relevel(race, ref = "NonHisp White")*poverty + sex * edu + HEALTH * distress + insurance, d, family=binomial)
+
+summary(logit7)
+
+
+```
+```{r coef of final model}
+coef <- coef(logit7)
+write.csv(coef, "coef.csv", row.names = T)
+
+```
+
+
+
+```{r}
+
+visreg(logit7, "race", by = "poverty", 
+       partial = T, overlay = F, 
+       xlab = "Race", 
+       ylab = "Predicted probability", 
+       scale= "response",
+       type="conditional",
+       alpha=.05) 
+```
+```{r compare models }
+
+anova <- anova(logit2, logit7,  test = "F")
+anova
+
+```
+
+```{r}
+cooksD <- cooks.distance(logit7)
+
+
+plot(cooksD, main = "Cooks Distance for Influential Obs")
+abline(h = 4/n, lty = 2, col = "steelblue") # add cutoff line
+```
+ 
+Note, no value more than 1, so does not have any outliers. 
+
+
+## Bayesian 
+
+```{r}
+
+install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+library(rstan)
+install.packages(c("bayesrules", "tidyverse", "janitor", "rstanarm",
+                   "bayesplot", "tidybayes", "broom.mixed", "modelr",
+                   "e1071", "forcats"), 
+                 dependencies = TRUE)
+library(rstanarm)
+```
+##simple bayesian model 
+
+```{r}
+
+#from this base logistic regression
+##logit1 = glm(dependence ~ relevel(age, ref =  "18-25 ")+ sex + relevel(race, ref = "NonHisp White"), d, family=binomial)
+
+#Here we’ll use a Student t prior with 7 degrees of freedom and a scale of 2.5, which, as discussed above, is a reasonable default prior when coefficients should be close to zero but have some chance of being large.
+library(glmmfields)
+t_prior <- student_t(df = 7, location = 0, scale = 2.5)
+fit1 <- stan_glm(dependence ~ relevel(age, ref =  "18-25 ")+ sex + relevel(race, ref = "NonHisp White"), d,
+                 family = binomial(link = "logit"),
+                 prior = t_prior, 
+                 prior_intercept = t_prior,
+                 cores = 2, seed = 12345)
+```
+
